@@ -1,0 +1,25 @@
+#!/bin/bash
+
+DIR=`dirname $0`
+TARGET_DIR=$DIR/../target
+LIBS=$TARGET_DIR/libs
+CP=$TARGET_DIR/classes:$TARGET_DIR/libs/*
+
+if [ -f $HOME/log4j.properties ]; then
+    LOG="-Dlog4j.configuration=file:$HOME/log4j.properties"
+fi;
+
+if [ -f $HOME/log4j2.xml ]; then
+    LOG="$LOG -Dlog4j.configurationFile=$HOME/log4j2.xml"
+else
+    LOG="$LOG -Dlog4j.configurationFile=log4j2.xml"
+fi
+
+if [ -f $HOME/logging.properties ]; then
+    LOG="$LOG -Djava.util.logging.config.file=$HOME/logging.properties"
+fi;
+
+FLAGS="$JAVA_OPTS"
+#DEBUG="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=*:8787"
+
+java -cp $CP $LOG $DEBUG $FLAGS org.infinispan.Main $*
