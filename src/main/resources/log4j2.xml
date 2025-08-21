@@ -3,7 +3,7 @@
     <appenders>
         <Console name="STDOUT" target="SYSTEM_OUT" follow="true">
             <!--PatternLayout pattern="%-7d{HH:mm:ss,SSS} [%p] %c: %m%n"/-->
-            <PatternLayout pattern="%r [%p] %c{1}: %m%n"/> 
+            <PatternLayout pattern="%-7d{HH:mm:ss,SSS} [%p] [%t] (%c{1.}): %m%n"/>
         </Console>
     </appenders>
     <loggers>

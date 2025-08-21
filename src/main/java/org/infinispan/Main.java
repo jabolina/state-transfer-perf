@@ -1,6 +1,7 @@
 package org.infinispan;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.concurrent.Callable;
 
 import org.apache.logging.log4j.LogManager;
@@ -123,9 +124,20 @@ public class Main {
         public Integer call() {
             LOG.info("Starting node with: {} -- {}", control, agent);
 
+            LOG.info("Create agent node: {}", agent);
+            Agent a;
+            try {
+                a = Agent.create(agent);
+            } catch (Throwable e) {
+                LOG.error("Failed creating agent", e);
+                return 3;
+            }
+
+            a.init();
+
             Control c;
             try {
-                c = Control.create(control);
+                c = Control.create(control, a);
             } catch (Exception e) {
                 LOG.error("Failed creating control node", e);
                 return 1;
@@ -138,16 +150,9 @@ public class Main {
                 return 2;
             }
 
-            LOG.info("Create agent node: {}", agent);
-            Agent a;
-            try {
-                a = Agent.create(agent);
-            } catch (Throwable e) {
-                LOG.error("Failed creating agent", e);
-                return 3;
-            }
+            LOG.info("Waiting until test completion");
+            c.bind();
 
-            a.start();
             LOG.info("Stop agent node");
             a.stop();
 
@@ -158,6 +163,7 @@ public class Main {
     }
 
     public static void main(String[] args) throws Throwable {
+        //String[] v = {"-cc", "configuration/local/control.xml", "-ac", "configuration/local/dist-sync.xml", "--first", "--warmup=PT10S", "--duration=PT20S", "--num-keys=20"};
         int exitCode = new CommandLine(new Scaler()).execute(args);
         System.exit(exitCode);
     }

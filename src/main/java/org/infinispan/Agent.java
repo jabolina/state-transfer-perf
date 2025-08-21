@@ -1,27 +1,24 @@
 package org.infinispan;
 
-import org.infinispan.manager.DefaultCacheManager;
-import org.infinispan.manager.EmbeddedCacheManager;
+import java.util.concurrent.CompletionStage;
 
-public final class Agent {
-    private final Main.Scaler.AgentSection configuration;
-    private final EmbeddedCacheManager ecm;
+import org.infinispan.agent.AgentFactory;
 
-    private Agent(Main.Scaler.AgentSection configuration, EmbeddedCacheManager ecm) {
-        this.configuration = configuration;
-        this.ecm = ecm;
-    }
+public interface Agent {
 
-    public void start() {
-        ecm.start();
-    }
+    void init();
 
-    public void stop() {
-        ecm.stop();
-    }
+    void populate();
 
-    public static Agent create(Main.Scaler.AgentSection configuration) throws Throwable {
-        EmbeddedCacheManager ecm = new DefaultCacheManager(configuration.getConfiguration(), false);
-        return new Agent(configuration, ecm);
+    CompletionStage<Metric> warmup();
+
+    CompletionStage<Metric> execute();
+
+    Main.Scaler.AgentSection configuration();
+
+    void stop();
+
+    static Agent create(Main.Scaler.AgentSection configuration) throws Throwable {
+        return AgentFactory.create(configuration);
     }
 }
