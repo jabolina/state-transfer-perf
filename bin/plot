@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ "$#" -ne 2 ]; then
+    echo "Error: Invalid number of arguments." >&2
+    echo "Usage: $0 <writes_csv> <reads_csv>" >&2
+    exit 1
+fi
+
+DIR=`dirname $0`
+writes_csv="$1"
+reads_csv="$2"
+
+gnuplot -c $DIR/stacked.gp $writes_csv target/writes-stacked.png > /dev/null
+gnuplot -c $DIR/stacked.gp $reads_csv target/reads-stacked.png > /dev/null
+
+gnuplot -c $DIR/throughput.gp $writes_csv target/writes-individual.png > /dev/null
+gnuplot -c $DIR/throughput.gp $reads_csv target/reads-individual.png > /dev/null

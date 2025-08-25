@@ -1,7 +1,6 @@
 package org.infinispan;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.concurrent.Callable;
 
 import org.apache.logging.log4j.LogManager;
@@ -34,6 +33,9 @@ public class Main {
             @Option(names = {"-f", "--first"}, description = "Mark this node as the controller")
             protected boolean controller;
 
+            @Option(names = {"-o", "--output"}, description = "Location to write benchmark summary file", defaultValue = "null")
+            protected String outputFile;
+
             public String getConfiguration() {
                 return configuration;
             }
@@ -46,12 +48,17 @@ public class Main {
                 return controller;
             }
 
+            public String getOutputFile() {
+                return outputFile;
+            }
+
             @Override
             public String toString() {
                 return "ControlSection{" +
                         "configuration='" + configuration + '\'' +
                         ", clusterSize=" + clusterSize +
                         ", controller=" + controller +
+                        ", outputFile=" + outputFile +
                         '}';
             }
         }

@@ -5,6 +5,7 @@ import org.jgroups.util.Util;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -14,7 +15,6 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.HdrHistogram.Histogram;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.infinispan.Agent;
@@ -74,7 +74,6 @@ final class TestAgent implements Agent {
         }
 
         try {
-            LOG.info("Wait until cache populating finishes...");
             if (!latch.await(configuration.getWarmupDuration().toMillis(), TimeUnit.MILLISECONDS))
                 throw new IllegalStateException("Timed out to populate the cache");
         } catch (InterruptedException e) {
@@ -163,8 +162,8 @@ final class TestAgent implements Agent {
         private final CountDownLatch latch;
         private final byte[] payload;
         private final Duration duration;
-        private final Histogram[] writeHistogram;
-        private final Histogram[] readHistogram;
+        private final long[] writeHistogram;
+        private final long[] readHistogram;
 
         private volatile boolean running = true;
         private long reads;
@@ -176,12 +175,10 @@ final class TestAgent implements Agent {
             this.duration = duration;
 
             int space = Math.toIntExact(duration.toSeconds());
-            this.writeHistogram = new Histogram[space];
-            this.readHistogram = new Histogram[space];
-            for (int i = 0; i < space; i++) {
-                this.writeHistogram[i] = new Histogram(1, 80_000_000_000L, 3);
-                this.readHistogram[i] = new Histogram(1, 80_000_000_000L, 3);
-            }
+            this.writeHistogram = new long[space];
+            this.readHistogram = new long[space];
+            Arrays.fill(writeHistogram, 0);
+            Arrays.fill(readHistogram, 0);
         }
 
         public void cancel() {
@@ -205,18 +202,15 @@ final class TestAgent implements Agent {
                 int index = (int) Duration.between(testStart, Instant.now()).toSeconds();
 
                 try {
-                    long start = System.nanoTime();
                     if (isRead) {
-                        cache.get(key);
-                        long total = System.nanoTime() - start;
+                        Objects.requireNonNull(cache.get(key));
                         if (index < readHistogram.length)
-                            readHistogram[index].recordValue(total);
+                            readHistogram[index] += 1;
                         reads++;
                     } else {
                         cache.put(key, payload);
-                        long total = System.nanoTime() - start;
                         if (index < writeHistogram.length)
-                            writeHistogram[index].recordValue(total);
+                            writeHistogram[index] += 1;
                         writes++;
                     }
                 } catch (Throwable t) {

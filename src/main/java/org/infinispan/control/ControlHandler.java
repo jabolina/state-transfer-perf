@@ -10,7 +10,13 @@ import org.jgroups.util.ByteArrayDataOutputStream;
 import org.jgroups.util.ResponseCollector;
 import org.jgroups.util.Util;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -43,10 +49,6 @@ public class ControlHandler implements Receiver {
         LOG.info("Connecting control channel");
         channel.setReceiver(this);
         channel.connect("scale-control");
-
-//        if (configuration.isController()) {
-//            viewAccepted(channel.view());
-//        }
     }
 
     private void execute() {
@@ -98,37 +100,73 @@ public class ControlHandler implements Receiver {
         if (!allResults)
             LOG.warn("Missing results from members: {}", collector.getMissing());
 
-        Metric overall = null;
         StringBuilder sb = new StringBuilder("Load test summary:").append(System.lineSeparator());
 
         long totalReqs = 0, totalTime = 0, longestTime = 0;
+        long totalPuts = 0, totalGets = 0;
         for (Map.Entry<Address, Metric> entry : collector.getResults().entrySet()) {
             Address mbr = entry.getKey();
             Metric result = entry.getValue();
 
-            if (overall == null)
-                overall = result;
-
             if(result != null) {
                 totalReqs += result.puts() + result.gets();
+                totalPuts += result.puts();
+                totalGets += result.gets();
                 totalTime += result.time();
                 longestTime = Math.max(longestTime, result.time());
                 sb.append(mbr).append(": ").append(result.summary()).append(System.lineSeparator());
-
-                if (overall != result)
-                    overall = overall.add(result);
             }
         }
 
         double reqSecNode = totalReqs / (totalTime / 1000f);
         double reqSecCluster = totalReqs / (longestTime / 1000f);
         double throughput = reqSecNode * agent.configuration().getMessageSize();
-        String summary=String.format("Throughput: %,.0f reqs/sec/node (%s/sec) %,.0f reqs/sec/cluster%nTotal: %s",
-                reqSecNode, Util.printBytes(throughput), reqSecCluster,
-                overall != null ? overall.summary() : "");
+        String summary=String.format("Throughput: %,.0f reqs/sec/node (%s/sec) %,.0f reqs/sec/cluster%nTotal: %d gets / %d puts",
+                reqSecNode, Util.printBytes(throughput), reqSecCluster, totalGets, totalPuts);
 
         sb.append(System.lineSeparator()).append("\033[1m").append(summary).append("\033[0m").append(System.lineSeparator());
         LOG.info(sb);
+
+        if (configuration.getOutputFile() != null) {
+            LOG.info("Writing benchmark results to {}", configuration.getOutputFile());
+            writeOutputToFile(collector.getResults(), (int) longestTime);
+        }
+    }
+
+    private void writeOutputToFile(Map<Address, Metric> result, int time) {
+        Path dataDirectory = Path.of(configuration.getOutputFile());
+        if (!Files.isDirectory(dataDirectory)) {
+            LOG.warn("Output path {} is not a directory. Skipping file write", configuration.getOutputFile());
+            return;
+        }
+
+        try (BufferedWriter reads = new BufferedWriter(new FileWriter(dataDirectory.resolve("reads.csv").toFile()));
+             BufferedWriter writes = new BufferedWriter(new FileWriter(dataDirectory.resolve("writes.csv").toFile()))) {
+            writes.write("Time");
+            reads.write("Time");
+            Set<Address> keys = result.keySet();
+            for (Address address : keys) {
+                writes.write(String.format(",%s", address));
+                reads.write(String.format(",%s", address));
+            }
+
+            writes.newLine();
+            reads.newLine();
+
+            for (int i = 0; i < time; i++) {
+                writes.write(Integer.toString(i));
+                reads.write(Integer.toString(i));
+                for (Address key : keys) {
+                    Metric metric = result.get(key);
+                    reads.write(String.format(",%d", metric.getsAt(i)));
+                    writes.write(String.format(",%d", metric.putsAt(i)));
+                }
+                writes.newLine();
+                reads.newLine();
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void send(Address dest, ProtocolStep step, Object ... args) throws Exception {

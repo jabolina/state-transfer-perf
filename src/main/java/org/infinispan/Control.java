@@ -4,13 +4,9 @@ import org.jgroups.JChannel;
 
 import java.util.concurrent.CompletableFuture;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.infinispan.control.ControlHandler;
 
 public final class Control {
-    private static final Logger LOG = LogManager.getLogger(Control.class);
-
     private final ControlHandler handler;
     private final CompletableFuture<Void> shutdown = new CompletableFuture<>();
 
