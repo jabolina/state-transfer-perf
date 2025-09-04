@@ -7,6 +7,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 public class Metric implements Streamable {
+    private static final long[] EMPTY = {};
     private long puts;
     private long gets;
     private long[] getHistograms;
@@ -19,6 +20,10 @@ public class Metric implements Streamable {
         this.gets = gets;
         this.getHistograms = getHistograms;
         this.putHistograms = putHistograms;
+    }
+
+    public static Metric empty() {
+        return new Metric(0, EMPTY, 0, EMPTY);
     }
 
     @Override

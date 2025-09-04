@@ -2,6 +2,8 @@ package org.infinispan.control;
 
 enum ProtocolStep {
     WARMUP,
+    SCALE,
+    SCALE_REPLY,
     EXECUTE,
     STOP,
     RESULTS,

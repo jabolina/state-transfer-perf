@@ -27,8 +27,14 @@ public class Main {
             @Option(names = {"-cc", "--control-configuration"}, required = true, description = "JGroups XML configuration file")
             protected String configuration;
 
-            @Option(names = {"-s", "--cluster-size"}, description = "Number of nodes in the cluster", defaultValue = "1")
+            @Option(names = {"-cs", "--cluster-size"}, description = "Number of nodes in the cluster before starting the test. (${DEFAULT-VALUE})", defaultValue = "1")
             protected int clusterSize;
+
+            @Option(names = {"-is", "--initial-size"}, description = "Initial cluster size. Coordinator is always created, negative value initialize all. (${DEFAULT-VALUE})", defaultValue = "-1")
+            protected int initialSize;
+
+            @Option(names = {"-ss", "--scale-size"}, description = "The number of nodes the cluster should scale to. Negative values do not change the cluster. (${DEFAULT-VALUE})", defaultValue = "-1")
+            protected int scaleToSize;
 
             @Option(names = {"-f", "--first"}, description = "Mark this node as the controller")
             protected boolean controller;
@@ -44,6 +50,14 @@ public class Main {
                 return clusterSize;
             }
 
+            public int getInitialSize() {
+                return initialSize;
+            }
+
+            public int getScaleToSize() {
+                return scaleToSize;
+            }
+
             public boolean isController() {
                 return controller;
             }
@@ -57,6 +71,8 @@ public class Main {
                 return "ControlSection{" +
                         "configuration='" + configuration + '\'' +
                         ", clusterSize=" + clusterSize +
+                        ", initialSize=" + initialSize +
+                        ", scaleSize=" + scaleToSize +
                         ", controller=" + controller +
                         ", outputFile=" + outputFile +
                         '}';
@@ -79,7 +95,7 @@ public class Main {
             @Option(names = "--warmup", description = "Warmup phase duration. (${DEFAULT-VALUE})", defaultValue = "PT1M")
             protected Duration warmupDuration;
 
-            @Option(names = "--duration", description = "Test duration time. (${DEFAULT-VALUE})", defaultValue = "PT2M")
+            @Option(names = "--duration", description = "Test duration time. (${DEFAULT-VALUE})", defaultValue = "PT1M")
             protected Duration testDuration;
 
             @Option(names = "--read-ratio", description = "The read-write ratio. (${DEFAULT-VALUE})", defaultValue = "0.8")
@@ -131,20 +147,9 @@ public class Main {
         public Integer call() {
             LOG.info("Starting node with: {} -- {}", control, agent);
 
-            LOG.info("Create agent node: {}", agent);
-            Agent a;
-            try {
-                a = Agent.create(agent);
-            } catch (Throwable e) {
-                LOG.error("Failed creating agent", e);
-                return 3;
-            }
-
-            a.init();
-
             Control c;
             try {
-                c = Control.create(control, a);
+                c = Control.create(control, () -> Agent.create(agent));
             } catch (Exception e) {
                 LOG.error("Failed creating control node", e);
                 return 1;
@@ -159,9 +164,6 @@ public class Main {
 
             LOG.info("Waiting until test completion");
             c.bind();
-
-            LOG.info("Stop agent node");
-            a.stop();
 
             LOG.info("Stop control node");
             c.stop();

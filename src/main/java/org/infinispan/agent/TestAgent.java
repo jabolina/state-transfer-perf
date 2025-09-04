@@ -32,6 +32,7 @@ final class TestAgent implements Agent {
     private final ExecutorService executor;
 
     private Cache<Integer, byte[]> cache;
+    private volatile boolean initialized;
 
     TestAgent(Main.Scaler.AgentSection configuration, EmbeddedCacheManager ecm) {
         this.configuration = configuration;
@@ -41,6 +42,8 @@ final class TestAgent implements Agent {
 
     @Override
     public void init() {
+        if (initialized) return;
+        initialized = true;
         ecm.start();
         cache = ecm.getCache(CACHE_NAME);
     }

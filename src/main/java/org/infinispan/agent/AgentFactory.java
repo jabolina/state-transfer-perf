@@ -11,4 +11,8 @@ public final class AgentFactory {
         EmbeddedCacheManager ecm = new DefaultCacheManager(configuration.getConfiguration(), false);
         return new TestAgent(configuration, ecm);
     }
+
+    public interface Create {
+        Agent create() throws Throwable;
+    }
 }

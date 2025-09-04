@@ -15,16 +15,19 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.infinispan.Agent;
 import org.infinispan.Main;
 import org.infinispan.Metric;
+import org.infinispan.agent.AgentFactory;
 
 public class ControlHandler implements Receiver {
     private static final Logger LOG = LogManager.getLogger(ControlHandler.class);
@@ -32,17 +35,20 @@ public class ControlHandler implements Receiver {
     private final ExecutorService executor;
     private final JChannel channel;
     private final Main.Scaler.ControlSection configuration;
-    private final Agent agent;
     private final Runnable completionListener;
-    private final ResponseCollector<Metric> collector;
+    private final ResponseCollector<Metric> loadCollector;
+    private final ResponseCollector<Long> scaleCollector;
+    private final AgentFactory.Create factory;
+    private Agent agent;
 
-    public ControlHandler(JChannel channel, Agent agent, Main.Scaler.ControlSection configuration, Runnable completionListener) {
+    public ControlHandler(JChannel channel, AgentFactory.Create factory, Main.Scaler.ControlSection configuration, Runnable completionListener) {
         this.channel = channel;
-        this.agent = agent;
+        this.factory = factory;
         this.configuration = configuration;
         this.completionListener = completionListener;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
-        this.collector = new ResponseCollector<>();
+        this.loadCollector = new ResponseCollector<>();
+        this.scaleCollector = new ResponseCollector<>();
     }
 
     public void start() throws Exception {
@@ -53,13 +59,28 @@ public class ControlHandler implements Receiver {
 
     private void execute() {
         LOG.info("Starting test");
+        if (agent != null)
+            throw new IllegalStateException("Agent is already in place");
+
+        try {
+            agent = factory.create();
+        } catch (Throwable e) {
+            LOG.error("Failed creating agent", e);
+            throw new RuntimeException(e);
+        }
+
+        agent.init();
         agent.populate();
 
-        LOG.info("Perform warmup phase");
-        warmup();
+        LOG.info("Initial cluster scale");
+        scale(configuration.getInitialSize(), agent.configuration().getWarmupDuration().multipliedBy(2));
 
         LOG.info("Perform load test");
-        loadTest();
+        loadTest(ProtocolStep.WARMUP, agent.configuration().getWarmupDuration().multipliedBy(2));
+        loadTest(ProtocolStep.EXECUTE, agent.configuration().getTestDuration().multipliedBy(2));
+
+        LOG.info("Scale cluster to final form");
+        scale(configuration.getScaleToSize(), agent.configuration().getTestDuration().multipliedBy(2));
 
         LOG.info("Shutting cluster down");
         try {
@@ -69,42 +90,79 @@ public class ControlHandler implements Receiver {
         }
     }
 
-    private void warmup() {
-        collector.reset(channel.view().getMembers());
-
-        try {
-            send(null, ProtocolStep.WARMUP);
-        } catch (Throwable t) {
-            LOG.error("Failed to submit warmup", t);
-            return;
+    private long scale(int size) {
+        Address local = channel.address();
+        int index = channel.view().getMembers().indexOf(local) + 1;
+        if (size > 0 && index >= size) {
+            if (agent != null) {
+                long start = System.nanoTime();
+                agent.stop();
+                return System.nanoTime() - start;
+            }
+            return 0L;
         }
 
-        boolean allResults = collector.waitForAllResponses(agent.configuration().getWarmupDuration().multipliedBy(2).toMillis());
-        if (!allResults)
-            LOG.warn("Missing result from members: {}", collector.getMissing());
+        if (agent != null)
+            return 0L;
 
-        LOG.info("Received all metrics for warmup");
+        long start = System.nanoTime();
+        try {
+            agent = factory.create();
+        } catch (Throwable e) {
+            LOG.error("Failed creating agent", e);
+            return -1L;
+        }
+
+        agent.init();
+        return System.nanoTime() - start;
     }
 
-    private void loadTest() {
-        collector.reset(channel.view().getMembers());
+    private void scale(int size, Duration timeout) {
+        scaleCollector.reset(channel.view().getMembers());
 
         try {
-            send(null, ProtocolStep.EXECUTE);
+            send(null, ProtocolStep.SCALE, size);
         } catch (Throwable t) {
-            LOG.error("Failed to submit execute step", t);
+            LOG.error("Failed to scale to {} members", size, t);
             return;
         }
 
-        boolean allResults = collector.waitForAllResponses(agent.configuration().getTestDuration().multipliedBy(2).toMillis());
+        boolean results = scaleCollector.waitForAllResponses(timeout.toMillis());
+        if (!results)
+            LOG.warn("Missing result from members: {}", scaleCollector.getMissing());
+
+        StringBuilder sb = new StringBuilder("Scaling cluster summary:").append(System.lineSeparator());
+        for (Map.Entry<Address, Long> entry : scaleCollector.getResults().entrySet()) {
+            sb.append(entry.getKey())
+                    .append(": ")
+                    .append(Util.printTime(entry.getValue(), TimeUnit.NANOSECONDS))
+                    .append(System.lineSeparator());
+        }
+        LOG.info(sb);
+    }
+
+    private void loadTest(ProtocolStep step, Duration timeout) {
+        loadCollector.reset(channel.view().getMembers());
+
+        try {
+            send(null, step);
+        } catch (Throwable t) {
+            LOG.error("Failed to submit step {}", step, t);
+            return;
+        }
+
+        boolean allResults = loadCollector.waitForAllResponses(timeout.toMillis());
         if (!allResults)
-            LOG.warn("Missing results from members: {}", collector.getMissing());
+            LOG.warn("Missing results from members: {}", loadCollector.getMissing());
+
+        if (step != ProtocolStep.EXECUTE)
+            return;
 
         StringBuilder sb = new StringBuilder("Load test summary:").append(System.lineSeparator());
 
         long totalReqs = 0, totalTime = 0, longestTime = 0;
         long totalPuts = 0, totalGets = 0;
-        for (Map.Entry<Address, Metric> entry : collector.getResults().entrySet()) {
+        for (Map.Entry<Address, Metric> entry : loadCollector.getResults().entrySet()) {
             Address mbr = entry.getKey();
             Metric result = entry.getValue();
 
@@ -129,7 +187,7 @@ public class ControlHandler implements Receiver {
 
         if (configuration.getOutputFile() != null) {
             LOG.info("Writing benchmark results to {}", configuration.getOutputFile());
-            writeOutputToFile(collector.getResults(), (int) longestTime);
+            writeOutputToFile(loadCollector.getResults(), (int) longestTime);
         }
     }
 
@@ -198,27 +256,57 @@ public class ControlHandler implements Receiver {
 
         LOG.info("Received step {} from {}", step, msg.src());
         switch (step) {
-            case WARMUP -> agent.warmup().whenComplete((m, t) -> {
-                if (t != null)
-                    LOG.error("Failed executing warmup", t);
-                replyResult(msg.src(), m);
-            });
-            case EXECUTE -> agent.execute().whenComplete((m, t) -> {
-                if (t != null)
-                    LOG.error("Failed executing test", t);
-                replyResult(msg.src(), m);
-            });
+            case WARMUP -> {
+                if (agent == null) {
+                    replyResult(msg.src(), Metric.empty());
+                    return;
+                }
+                agent.warmup().whenComplete((m, t) -> {
+                    if (t != null)
+                        LOG.error("Failed executing warmup", t);
+                    replyResult(msg.src(), m);
+                });
+            }
+            case EXECUTE -> {
+                if (agent == null) {
+                    replyResult(msg.src(), Metric.empty());
+                    return;
+                }
+                agent.execute().whenComplete((m, t) -> {
+                    if (t != null)
+                        LOG.error("Failed executing test", t);
+                    replyResult(msg.src(), m);
+                });
+            }
+            case SCALE -> {
+                ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, msg.getOffset() + 1, msg.getLength() - 1);
+                int size = Util.objectFromStream(in);
+                replyResult(msg.src(), scale(size));
+            }
+            case SCALE_REPLY -> {
+                ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, msg.getOffset() + 1, msg.getLength() - 1);
+                long duration = Util.objectFromStream(in);
+                scaleCollector.add(msg.src(), duration);
+            }
             case STOP -> agent.stop();
             case RESULTS -> {
                 ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, msg.getOffset() + 1, msg.getLength() - 1);
                 Metric metric = Util.objectFromStream(in);
-                collector.add(msg.src(), metric);
+                loadCollector.add(msg.src(), metric);
             }
             case SHUTDOWN -> {
                 Util.close(channel);
                 executor.close();
                 completionListener.run();
             }
+        }
+    }
+
+    private void replyResult(Address sender, long result) {
+        try {
+            send(sender, ProtocolStep.SCALE_REPLY, result);
+        } catch (Exception e) {
+            LOG.error("Failed to reply steps to {}", sender, e);
         }
     }
 
