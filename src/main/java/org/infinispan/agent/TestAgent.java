@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -21,7 +22,15 @@ import org.infinispan.Agent;
 import org.infinispan.Cache;
 import org.infinispan.Main;
 import org.infinispan.Metric;
+import org.infinispan.commons.util.IntSets;
+import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.notifications.Listener;
+import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
+import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
+import org.infinispan.remoting.transport.Address;
 
 final class TestAgent implements Agent {
     private static final Logger LOG = LogManager.getLogger(TestAgent.class);
@@ -46,6 +55,43 @@ final class TestAgent implements Agent {
         initialized = true;
         ecm.start();
         cache = ecm.getCache(CACHE_NAME);
+    }
+
+    @Override
+    public CompletionStage<Long> waitDataRehash() {
+        if (cache == null) return CompletableFuture.completedFuture(0L);
+
+        DataRehashListener listener = new DataRehashListener();
+        cache.addListener(listener);
+        return listener.join().whenComplete((ignore, t) -> cache.removeListener(listener));
+    }
+
+    @Override
+    public void showOccupancy() {
+        DistributionManager dm = ComponentRegistry.componentOf(cache, DistributionManager.class);
+        ConsistentHash ch = dm.getCacheTopology().getCurrentCH();
+
+        StringBuilder sb = new StringBuilder();
+
+        for (Address member : ch.getMembers()) {
+            sb.append(member).append(":").append(System.lineSeparator());
+            Set<Integer> segments = ch.getSegmentsForOwner(member);
+            long totalEntries = 0;
+
+            for (Integer segment : segments) {
+                long count = cache.getAdvancedCache().keySet().stream()
+                        .filterKeySegments(IntSets.from(Set.of(segment)))
+                        .count();
+                sb.append('\t').append(segment).append(": ").append(count).append(System.lineSeparator());
+                totalEntries += count;
+            }
+            sb.append('\t').append("Total: ")
+                    .append(segments.size()).append(" (segments) /")
+                    .append(totalEntries).append(" (entries)")
+                    .append(System.lineSeparator());
+        }
+
+        LOG.info(sb);
     }
 
     @Override
@@ -159,6 +205,7 @@ final class TestAgent implements Agent {
     @Override
     public void stop() {
         ecm.stop();
+        cache = null;
     }
 
     private final class Invoker implements Runnable {
@@ -224,6 +271,29 @@ final class TestAgent implements Agent {
 
         public Metric result() {
             return new Metric(writes, writeHistogram, reads, readHistogram);
+        }
+    }
+
+    @Listener
+    private static final class DataRehashListener {
+        private final CompletableFuture<Long> cf;
+        private volatile long start;
+
+        private DataRehashListener() {
+            this.cf = new CompletableFuture<>();
+        }
+
+        public CompletionStage<Long> join() {
+            return cf;
+        }
+
+        @DataRehashed
+        public void onDataRehash(DataRehashedEvent<Object, Object> ev) {
+            if (!ev.isPre()) {
+                cf.complete(System.nanoTime() - start);
+            } else {
+                start = System.nanoTime();
+            }
         }
     }
 }

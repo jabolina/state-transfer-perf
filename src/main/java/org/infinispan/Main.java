@@ -42,6 +42,15 @@ public class Main {
             @Option(names = {"-o", "--output"}, description = "Location to write benchmark summary file", defaultValue = "null")
             protected String outputFile;
 
+            @Option(names = "--enable-load", description = "Enable load test before scaling. (${DEFAULT-VALUE})", defaultValue = "false")
+            protected boolean includeLoad;
+
+            @Option(names = "--profiling", description = "Enables profiling with async-profiler. (${DEFAULT-VALUE})", defaultValue = "false")
+            protected boolean enableProfiling;
+
+            @Option(names = "--repeat", description = "Number of times to repeat the scaling procedure. (${DEFAULT-VALUE})", defaultValue = "1")
+            protected int repeatScaleTimes;
+
             public String getConfiguration() {
                 return configuration;
             }
@@ -66,6 +75,18 @@ public class Main {
                 return outputFile;
             }
 
+            public boolean isIncludeLoad() {
+                return includeLoad;
+            }
+
+            public boolean isProfilingEnabled() {
+                return enableProfiling;
+            }
+
+            public int getRepeatScaleTimes() {
+                return repeatScaleTimes;
+            }
+
             @Override
             public String toString() {
                 return "ControlSection{" +
@@ -73,8 +94,11 @@ public class Main {
                         ", clusterSize=" + clusterSize +
                         ", initialSize=" + initialSize +
                         ", scaleSize=" + scaleToSize +
+                        ", includeLoad=" + includeLoad +
                         ", controller=" + controller +
                         ", outputFile=" + outputFile +
+                        ", enableProfiling=" + enableProfiling +
+                        ", repeatScaleTimes=" + repeatScaleTimes +
                         '}';
             }
         }

@@ -10,6 +10,10 @@ public interface Agent {
 
     void populate();
 
+    CompletionStage<Long> waitDataRehash();
+
+    void showOccupancy();
+
     CompletionStage<Metric> warmup();
 
     CompletionStage<Metric> execute();
