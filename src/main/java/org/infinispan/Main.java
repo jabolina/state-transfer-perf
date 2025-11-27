@@ -113,17 +113,20 @@ public class Main {
             @Option(names = "--num-keys", description = "Number of keys to insert and operate. (${DEFAULT-VALUE})", defaultValue = "100000")
             protected int keyspace;
 
-            @Option(names = "--message-size", description = "The payload size to use as value. (${DEFAULT-VALUE})", defaultValue = "1000")
-            protected int messageSize;
-
             @Option(names = "--warmup", description = "Warmup phase duration. (${DEFAULT-VALUE})", defaultValue = "PT1M")
             protected Duration warmupDuration;
 
-            @Option(names = "--duration", description = "Test duration time. (${DEFAULT-VALUE})", defaultValue = "PT1M")
+            @Option(names = "--duration", description = "Test duration time. (${DEFAULT-VALUE})", defaultValue = "PT2M")
             protected Duration testDuration;
 
             @Option(names = "--read-ratio", description = "The read-write ratio. (${DEFAULT-VALUE})", defaultValue = "0.8")
             protected float readPercentage;
+
+            @Option(names = "--indexing", description = "Enable indexing for the cache content. (${DEFAULT-VALUE})", defaultValue = "false")
+            protected boolean indexing;
+
+            @Option(names = "--persistence", description = "Enable SIFS persistence for the cache. (${DEFAULT-VALUE})", defaultValue = "false")
+            protected boolean persistence;
 
             public String getConfiguration() {
                 return configuration;
@@ -133,12 +136,16 @@ public class Main {
                 return numThreads;
             }
 
-            public int getKeyspace() {
-                return keyspace;
+            public boolean isIndexingEnabled() {
+                return indexing;
             }
 
-            public int getMessageSize() {
-                return messageSize;
+            public boolean isPersistenceEnabled() {
+                return persistence;
+            }
+
+            public int getKeyspace() {
+                return keyspace;
             }
 
             public Duration getWarmupDuration() {
@@ -159,7 +166,6 @@ public class Main {
                         "configuration='" + configuration + '\'' +
                         ", numThreads=" + numThreads +
                         ", keyspace=" + keyspace +
-                        ", messageSize=" + messageSize +
                         ", warmupDuration=" + warmupDuration +
                         ", testDuration=" + testDuration +
                         ", readPercentage=" + readPercentage +

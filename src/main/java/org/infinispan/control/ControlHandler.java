@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
@@ -44,6 +45,7 @@ public class ControlHandler implements Receiver {
     private final ResponseCollector<Long> scaleCollector;
     private final AgentFactory.Create factory;
     private Agent agent;
+    private int scaled;
 
     public ControlHandler(JChannel channel, AgentFactory.Create factory, Main.Scaler.ControlSection configuration, Runnable completionListener) {
         this.channel = channel;
@@ -78,17 +80,29 @@ public class ControlHandler implements Receiver {
 
         LOG.info("Initial cluster scale to {}", configuration.getInitialSize());
         for (int i = 0; i < configuration.getRepeatScaleTimes(); i++) {
-            scale(configuration.getInitialSize(), agent.configuration().getWarmupDuration().multipliedBy(2));
-            if (i == 0 && configuration.isIncludeLoad()) {
+            if (i > 0) {
+                scaleDownAtATime(1, agent.configuration().getTestDuration().multipliedBy(2));
+            }
+
+            boolean fullScale = configuration.getInitialSize() < 0;
+            if (fullScale) {
+                scale(configuration.getClusterSize(), agent.configuration().getTestDuration().multipliedBy(2));
+            } else {
+                scale(configuration.getInitialSize(), agent.configuration().getWarmupDuration().multipliedBy(2));
+            }
+
+            if (configuration.isIncludeLoad()) {
                 LOG.info("Perform load test");
                 loadTest(ProtocolStep.WARMUP, agent.configuration().getWarmupDuration().multipliedBy(2));
                 loadTest(ProtocolStep.EXECUTE, agent.configuration().getTestDuration().multipliedBy(2));
             }
 
-            LOG.info("Scale cluster to final size {} -> {}", configuration.getInitialSize(), configuration.getScaleToSize());
-            scale(configuration.getScaleToSize(), agent.configuration().getTestDuration().multipliedBy(2));
+            if (!fullScale) {
+                scale(configuration.getScaleToSize(), agent.configuration().getTestDuration().multipliedBy(2));
+            }
         }
 
+        agent.showOccupancy();
         LOG.info("Shutting cluster down");
         try {
             send(null, ProtocolStep.SHUTDOWN);
@@ -119,7 +133,7 @@ public class ControlHandler implements Receiver {
         LOG.info("Joining the cluster now: {}", channel.address());
         AsyncProfiler profiler = AsyncProfiler.getInstance();
         boolean profiling = false;
-        if (configuration.isProfilingEnabled()) {
+        if (configuration.isProfilingEnabled() && ++scaled == configuration.getRepeatScaleTimes()) {
             try {
                 profiler.execute("start,event=cpu");
                 profiling = true;
@@ -147,6 +161,31 @@ public class ControlHandler implements Receiver {
         return completed;
     }
 
+    private void scaleDownAtATime(int size, Duration timeout) {
+        List<Address> members = channel.view().getMembers();
+        for (int i = size; i < members.size(); i++) {
+            Address target = members.get(i);
+
+            scaleCollector.reset(target);
+            CompletionStage<Long> local = agent.waitDataRehash();
+            try {
+                send(target, ProtocolStep.SCALE, size);
+            } catch (Throwable t) {
+                LOG.error("Failed to scale to {} members", size, t);
+                return;
+            }
+
+            if (!scaleCollector.waitForAllResponses(timeout.toMillis()))
+                LOG.warn("Node didn't reply: {}", scaleCollector.getMissing());
+
+            try {
+                local.toCompletableFuture().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                LOG.error("Never received rehash completed.", e);
+            }
+        }
+    }
+
     private void scale(int size, Duration timeout) {
         scaleCollector.reset(channel.view().getMembers());
 
@@ -158,7 +197,6 @@ public class ControlHandler implements Receiver {
             return;
         }
 
-        LOG.info("Wait listener");
         long v = 0;
         try {
             v = local.toCompletableFuture().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -176,6 +214,7 @@ public class ControlHandler implements Receiver {
             sb.append(entry.getKey())
                     .append(": ")
                     .append(Util.printTime(entry.getValue(), TimeUnit.NANOSECONDS))
+                    .append(" (").append(TimeUnit.NANOSECONDS.toSeconds(entry.getValue())).append(" s)")
                     .append(System.lineSeparator());
         }
         LOG.info(sb);
@@ -218,9 +257,8 @@ public class ControlHandler implements Receiver {
 
         double reqSecNode = totalReqs / (totalTime / 1000f);
         double reqSecCluster = totalReqs / (longestTime / 1000f);
-        double throughput = reqSecNode * agent.configuration().getMessageSize();
-        String summary=String.format("Throughput: %,.0f reqs/sec/node (%s/sec) %,.0f reqs/sec/cluster%nTotal: %d gets / %d puts",
-                reqSecNode, Util.printBytes(throughput), reqSecCluster, totalGets, totalPuts);
+        String summary=String.format("Throughput: %,.0f reqs/sec/node %,.0f reqs/sec/cluster%nTotal: %d gets / %d puts",
+                reqSecNode, reqSecCluster, totalGets, totalPuts);
 
         sb.append(System.lineSeparator()).append("\033[1m").append(summary).append("\033[0m").append(System.lineSeparator());
         LOG.info(sb);

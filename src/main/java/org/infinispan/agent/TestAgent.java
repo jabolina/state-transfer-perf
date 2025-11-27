@@ -7,13 +7,16 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.logging.log4j.LogManager;
@@ -22,7 +25,13 @@ import org.infinispan.Agent;
 import org.infinispan.Cache;
 import org.infinispan.Main;
 import org.infinispan.Metric;
+import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.util.IntSets;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.IndexStorage;
+import org.infinispan.data.Person;
+import org.infinispan.data.PersonKey;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.ComponentRegistry;
@@ -40,7 +49,7 @@ final class TestAgent implements Agent {
     private final EmbeddedCacheManager ecm;
     private final ExecutorService executor;
 
-    private Cache<Integer, byte[]> cache;
+    private Cache<PersonKey, Person> cache;
     private volatile boolean initialized;
 
     TestAgent(Main.Scaler.AgentSection configuration, EmbeddedCacheManager ecm) {
@@ -53,8 +62,32 @@ final class TestAgent implements Agent {
     public void init() {
         if (initialized) return;
         initialized = true;
+        LOG.info("Connecting ECM");
         ecm.start();
-        cache = ecm.getCache(CACHE_NAME);
+
+        LOG.info("Define default cache for tests");
+
+        try {
+            ConfigurationBuilder builder = new ConfigurationBuilder();
+            if (configuration.isIndexingEnabled()) {
+                builder.indexing().enable()
+                        .storage(IndexStorage.FILESYSTEM)
+                        .addIndexedEntity(Person.class);
+            }
+
+            if (configuration.isPersistenceEnabled()) {
+                builder.persistence().addSoftIndexFileStore();
+            }
+
+            builder.encoding().mediaType(MediaType.APPLICATION_PROTOSTREAM_TYPE);
+            builder.clustering().cacheMode(CacheMode.DIST_SYNC);
+
+            ecm.defineConfiguration(CACHE_NAME, builder.build());
+            cache = ecm.getCache(CACHE_NAME);
+        } catch (Exception e) {
+            LOG.error("Failed creating cache", e);
+            throw new RuntimeException("Failed creating cache", e);
+        }
     }
 
     @Override
@@ -72,6 +105,8 @@ final class TestAgent implements Agent {
         ConsistentHash ch = dm.getCacheTopology().getCurrentCH();
 
         StringBuilder sb = new StringBuilder();
+        StringBuilder summary = new StringBuilder();
+        long clusterCount = 0;
 
         for (Address member : ch.getMembers()) {
             sb.append(member).append(":").append(System.lineSeparator());
@@ -85,49 +120,70 @@ final class TestAgent implements Agent {
                 sb.append('\t').append(segment).append(": ").append(count).append(System.lineSeparator());
                 totalEntries += count;
             }
+            summary.append(member).append(": ").append(totalEntries).append(" (entries)").append(System.lineSeparator());
             sb.append('\t').append("Total: ")
                     .append(segments.size()).append(" (segments) /")
                     .append(totalEntries).append(" (entries)")
                     .append(System.lineSeparator());
+            clusterCount += totalEntries;
         }
 
-        LOG.info(sb);
+        summary.append("Cluster count: ").append(clusterCount);
+        //LOG.info(sb);
+        LOG.info(summary);
     }
 
     @Override
     public void populate() {
-        LOG.info("Populating cache with {} keys of size {} bytes", configuration.getKeyspace(), configuration.getMessageSize());
+        LOG.info("Populating cache with {} entries", configuration.getKeyspace());
 
         final int print = configuration.getKeyspace() / 10;
         AtomicInteger generate = new AtomicInteger(1);
-        byte[] payload = new byte[configuration.getMessageSize()];
-        ThreadLocalRandom.current().nextBytes(payload);
-        CountDownLatch latch = new CountDownLatch(configuration.getKeyspace());
+        Person person = generatePerson();
+        CountDownLatch latch = new CountDownLatch(configuration.getNumThreads());
 
         StringBuilder completion = new StringBuilder();
-        for (int i = 0; i < configuration.getKeyspace(); i++) {
-            executor.submit(() -> {
-                final int key = generate.getAndIncrement();
-                try {
-                    cache.put(key, payload);
+        CompletableFuture<?>[] cfs = new CompletableFuture[configuration.getNumThreads()];
+        for (int i = 0; i < configuration.getNumThreads(); i++) {
+            cfs[i] = CompletableFuture.runAsync(() -> {
+                while (true) {
+                    final int key = generate.getAndIncrement();
+                    if (key > configuration.getKeyspace())
+                        break;
+
+                    cache.put(new PersonKey(Integer.toString(key), "pseudonymas"), person);
                     if (print > 0 && key > 0 && key % print == 0) {
                         synchronized (completion) {
                             completion.append("=");
                             LOG.info("Populating: {}", completion.toString());
                         }
                     }
-                } finally {
-                    latch.countDown();
                 }
-            });
+                latch.countDown();
+            }, executor);
         }
 
         try {
-            if (!latch.await(configuration.getWarmupDuration().toMillis(), TimeUnit.MILLISECONDS))
-                throw new IllegalStateException("Timed out to populate the cache");
-        } catch (InterruptedException e) {
+            while (true) {
+                int progress = generate.get();
+                if (!latch.await(configuration.getTestDuration().toMillis(), TimeUnit.MILLISECONDS)) {
+                    if (progress != generate.get()) continue;
+                    LOG.warn("Took too long populating the cache");
+                    throw new IllegalStateException("Timed out to populate the cache");
+                }
+                break;
+            }
+
+            CompletableFuture.allOf(cfs).get(configuration.getWarmupDuration().multipliedBy(2).toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            LOG.error("Failed populating cache", e);
             throw new RuntimeException(e);
         }
+    }
+
+    private Person generatePerson() {
+        String content = UUID.randomUUID().toString();
+        return new Person(content, content, ThreadLocalRandom.current().nextInt(), content.repeat(3));
     }
 
     @Override
@@ -149,13 +205,12 @@ final class TestAgent implements Agent {
         try {
             LOG.info("Performing load test for {}", duration);
 
-            byte[] payload = new byte[configuration.getMessageSize()];
-            ThreadLocalRandom.current().nextBytes(payload);
+            Person person = generatePerson();
             final CountDownLatch latch = new CountDownLatch(1);
             Invoker[] invokers = new Invoker[configuration.getNumThreads()];
             CompletableFuture<?>[] execution = new CompletableFuture[configuration.getNumThreads()];
             for (int i = 0; i < configuration.getNumThreads(); i++) {
-                invokers[i] = new Invoker(latch, payload, duration);
+                invokers[i] = new Invoker(latch, person, duration);
                 execution[i] = CompletableFuture.runAsync(invokers[i], executor);
             }
 
@@ -210,7 +265,7 @@ final class TestAgent implements Agent {
 
     private final class Invoker implements Runnable {
         private final CountDownLatch latch;
-        private final byte[] payload;
+        private final Person payload;
         private final Duration duration;
         private final long[] writeHistogram;
         private final long[] readHistogram;
@@ -219,7 +274,7 @@ final class TestAgent implements Agent {
         private long reads;
         private long writes;
 
-        private Invoker(CountDownLatch latch, byte[] payload, Duration duration) {
+        private Invoker(CountDownLatch latch, Person payload, Duration duration) {
             this.latch = latch;
             this.payload = payload;
             this.duration = duration;
@@ -258,7 +313,7 @@ final class TestAgent implements Agent {
                             readHistogram[index] += 1;
                         reads++;
                     } else {
-                        cache.put(key, payload);
+                        cache.put(new PersonKey(Integer.toString(key), "pseudonymas"), payload);
                         if (index < writeHistogram.length)
                             writeHistogram[index] += 1;
                         writes++;
