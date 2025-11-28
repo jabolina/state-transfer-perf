@@ -104,10 +104,10 @@ public class Main {
         }
 
         public static class AgentSection {
-            @Option(names = {"-ac", "--agent-configuration"}, required = true, description = "Infinispan XML configuration file")
+            @Option(names = {"-ac", "--agent-configuration"}, description = "Infinispan XML configuration file")
             protected String configuration;
 
-            @Option(names = "--num-threads", description = "Number of worker threads submitting operations. (${DEFAULT-VALUE})", defaultValue = "100")
+            @Option(names = "--num-threads", description = "Number of worker threads submitting operations. (${DEFAULT-VALUE})", defaultValue = "10")
             protected int numThreads;
 
             @Option(names = "--num-keys", description = "Number of keys to insert and operate. (${DEFAULT-VALUE})", defaultValue = "100000")
@@ -128,6 +128,9 @@ public class Main {
             @Option(names = "--persistence", description = "Enable SIFS persistence for the cache. (${DEFAULT-VALUE})", defaultValue = "false")
             protected boolean persistence;
 
+            @Option(names = "--humongous", description = "Utilize a very large entry. (${DEFAULT-VALUE})", defaultValue = "false")
+            protected boolean humongous;
+
             public String getConfiguration() {
                 return configuration;
             }
@@ -142,6 +145,10 @@ public class Main {
 
             public boolean isPersistenceEnabled() {
                 return persistence;
+            }
+
+            public boolean isHumongousEnabled() {
+               return humongous;
             }
 
             public int getKeyspace() {

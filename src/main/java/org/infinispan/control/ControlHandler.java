@@ -86,9 +86,9 @@ public class ControlHandler implements Receiver {
 
             boolean fullScale = configuration.getInitialSize() < 0;
             if (fullScale) {
-                scale(configuration.getClusterSize(), agent.configuration().getTestDuration().multipliedBy(2));
+                scale(configuration.getClusterSize(), Duration.ofDays(1));
             } else {
-                scale(configuration.getInitialSize(), agent.configuration().getWarmupDuration().multipliedBy(2));
+                scale(configuration.getInitialSize(), Duration.ofDays(1));
             }
 
             if (configuration.isIncludeLoad()) {
@@ -98,7 +98,7 @@ public class ControlHandler implements Receiver {
             }
 
             if (!fullScale) {
-                scale(configuration.getScaleToSize(), agent.configuration().getTestDuration().multipliedBy(2));
+                scale(configuration.getScaleToSize(), Duration.ofDays(1));
             }
         }
 
