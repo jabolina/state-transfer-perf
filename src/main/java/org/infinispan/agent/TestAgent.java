@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -79,6 +80,8 @@ final class TestAgent implements Agent {
 
          builder.encoding().mediaType(MediaType.APPLICATION_PROTOSTREAM_TYPE);
          builder.clustering().cacheMode(CacheMode.DIST_SYNC);
+         // 159 is fine for --humongous
+         builder.clustering().stateTransfer().chunkSize(159);
 
          // Very large delay since we want to let it take as long as it needs.
          builder.clustering().stateTransfer().timeout(1, TimeUnit.DAYS);
@@ -145,9 +148,7 @@ final class TestAgent implements Agent {
       StringBuilder completion = new StringBuilder();
       CompletableFuture<?>[] cfs = new CompletableFuture[configuration.getNumThreads()];
       for (int i = 0; i < configuration.getNumThreads(); i++) {
-         Object payload = configuration.isHumongousEnabled()
-               ? HumongousEntry.createRandom()
-               : Person.create();
+         Object payload = createTestPayload();
          cfs[i] = CompletableFuture.runAsync(() -> {
             while (true) {
                final int key = generate.getAndIncrement();
@@ -199,6 +200,18 @@ final class TestAgent implements Agent {
       return configuration;
    }
 
+   private Object createTestPayload() {
+      if (configuration.blobSize() > 0) {
+         byte[] blob = new byte[configuration.blobSize()];
+         ThreadLocalRandom.current().nextBytes(blob);
+         return blob;
+      }
+
+      return configuration.isHumongousEnabled()
+            ? HumongousEntry.createRandom()
+            : Person.create();
+   }
+
    private Metric performLoad(Duration duration) {
       try {
          LOG.info("Performing load test for {}", duration);
@@ -206,9 +219,7 @@ final class TestAgent implements Agent {
          Invoker[] invokers = new Invoker[configuration.getNumThreads()];
          CompletableFuture<?>[] execution = new CompletableFuture[configuration.getNumThreads()];
          for (int i = 0; i < configuration.getNumThreads(); i++) {
-            Object payload = configuration.isHumongousEnabled()
-                  ? HumongousEntry.createRandom()
-                  : Person.create();
+            Object payload = createTestPayload();
             invokers[i] = new Invoker(latch, payload, duration);
             execution[i] = CompletableFuture.runAsync(invokers[i], executor);
          }
@@ -324,7 +335,7 @@ final class TestAgent implements Agent {
          while (Duration.between(testStart, Instant.now()).getSeconds() < duration.toSeconds()) {
             if (!running) break;
 
-            int key = Util.random(configuration.getKeyspace());
+            int key = Math.toIntExact(Util.random(configuration.getKeyspace()));
             boolean isRead = Util.tossWeightedCoin(configuration.getReadPercentage());
             int index = (int) Duration.between(testStart, Instant.now()).toSeconds();
 

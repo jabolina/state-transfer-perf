@@ -48,9 +48,6 @@ public class Main {
             @Option(names = "--profiling", description = "Enables profiling with async-profiler. (${DEFAULT-VALUE})", defaultValue = "false")
             protected boolean enableProfiling;
 
-            @Option(names = "--repeat", description = "Number of times to repeat the scaling procedure. (${DEFAULT-VALUE})", defaultValue = "1")
-            protected int repeatScaleTimes;
-
             public String getConfiguration() {
                 return configuration;
             }
@@ -83,10 +80,6 @@ public class Main {
                 return enableProfiling;
             }
 
-            public int getRepeatScaleTimes() {
-                return repeatScaleTimes;
-            }
-
             @Override
             public String toString() {
                 return "ControlSection{" +
@@ -98,7 +91,6 @@ public class Main {
                         ", controller=" + controller +
                         ", outputFile=" + outputFile +
                         ", enableProfiling=" + enableProfiling +
-                        ", repeatScaleTimes=" + repeatScaleTimes +
                         '}';
             }
         }
@@ -131,6 +123,9 @@ public class Main {
             @Option(names = "--humongous", description = "Utilize a very large entry. (${DEFAULT-VALUE})", defaultValue = "false")
             protected boolean humongous;
 
+            @Option(names = "--blob", description = "Transforms and uses the entries as raw byte arrays. (${DEFAULT-VALUE})", defaultValue = "0")
+            protected int blob;
+
             public String getConfiguration() {
                 return configuration;
             }
@@ -149,6 +144,10 @@ public class Main {
 
             public boolean isHumongousEnabled() {
                return humongous;
+            }
+
+            public int blobSize() {
+               return blob;
             }
 
             public int getKeyspace() {

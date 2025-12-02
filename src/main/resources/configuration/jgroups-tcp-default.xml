@@ -24,5 +24,5 @@
             thread_pool.min_threads="${jgroups.thread_pool.min_threads:0}"
             thread_pool.max_threads="${jgroups.thread_pool.max_threads:200}"
             thread_pool.keep_alive_time="60s"
-            use_virtual_threads="${vthreads:true}"/>
+            use_virtual_threads="${vthreads:false}"/>
 </config>

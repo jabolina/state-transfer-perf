@@ -11,7 +11,7 @@
 
     <cache-container name="default" default-cache="perf-cache">
         <transport stack="jgroupsStack" lock-timeout="600000" cluster="default" />
-        <jmx>
+        <jmx enabled="true">
             <property name="enabled">true</property>
         </jmx>
         <distributed-cache name="perf-cache"/>
