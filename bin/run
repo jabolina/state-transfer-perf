@@ -19,7 +19,7 @@ if [ -f $HOME/logging.properties ]; then
     LOG="$LOG -Djava.util.logging.config.file=$HOME/logging.properties"
 fi;
 
-FLAGS="$JAVA_OPTS -Dorg.infinispan.threads.virtual=true"
+FLAGS="$JAVA_OPTS -Xmx8g -Dorg.infinispan.threads.virtual=true"
 #DEBUG="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=*:8787"
 
 java -agentpath:/home/jab/async-profiler/lib/libasyncProfiler.so -cp $CP $LOG $DEBUG $FLAGS org.infinispan.Main $*

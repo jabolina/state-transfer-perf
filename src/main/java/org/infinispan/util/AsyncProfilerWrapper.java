@@ -24,7 +24,7 @@ public class AsyncProfilerWrapper implements AutoCloseable {
 
    public void start() {
       try {
-         profiler.execute("start,event=cpu");
+         profiler.execute("start,jfr,event=cpu,lock,file=target/%p-"+ name + ".jfr");
       } catch (IOException e) {
          LOG.error("Failed starting async-profiler", e);
       }
@@ -32,7 +32,7 @@ public class AsyncProfilerWrapper implements AutoCloseable {
 
    public void stop() {
       try {
-         profiler.execute("stop,file=target/%p-" + name + ".html");
+         profiler.execute("stop");
       } catch (IOException e) {
          LOG.error("Failed stopping async-profiler", e);
       }

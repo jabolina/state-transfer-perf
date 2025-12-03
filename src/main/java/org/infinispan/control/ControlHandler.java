@@ -95,6 +95,12 @@ public class ControlHandler implements Receiver {
       }
 
       agent.showOccupancy();
+//      try {
+//         Thread.sleep(300_000);
+//      } catch (InterruptedException e) {
+//         Thread.currentThread().interrupt();
+//      }
+
       LOG.info("Shutting cluster down");
       try {
          send(null, ProtocolStep.SHUTDOWN);

@@ -2,7 +2,9 @@ package org.infinispan.agent;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -15,6 +17,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -24,6 +27,8 @@ import org.infinispan.Main;
 import org.infinispan.Metric;
 import org.infinispan.commons.dataconversion.MediaType;
 import org.infinispan.commons.util.IntSets;
+import org.infinispan.commons.util.concurrent.AggregateCompletionStage;
+import org.infinispan.commons.util.concurrent.CompletionStages;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.IndexStorage;
@@ -48,7 +53,7 @@ final class TestAgent implements Agent {
    private final EmbeddedCacheManager ecm;
    private final ExecutorService executor;
 
-   private Cache<PersonKey, Object> cache;
+   private final List<Cache<PersonKey, Object>> caches = new ArrayList<>();
    private volatile boolean initialized;
 
    TestAgent(Main.Scaler.AgentSection configuration, EmbeddedCacheManager ecm) {
@@ -81,13 +86,21 @@ final class TestAgent implements Agent {
          builder.encoding().mediaType(MediaType.APPLICATION_PROTOSTREAM_TYPE);
          builder.clustering().cacheMode(CacheMode.DIST_SYNC);
          // 159 is fine for --humongous
-         builder.clustering().stateTransfer().chunkSize(159);
+         //builder.clustering().stateTransfer().chunkSize(159);
 
          // Very large delay since we want to let it take as long as it needs.
          builder.clustering().stateTransfer().timeout(1, TimeUnit.DAYS);
 
-         ecm.defineConfiguration(CACHE_NAME, builder.build());
-         cache = ecm.getCache(CACHE_NAME);
+         AggregateCompletionStage<Void> initialization = CompletionStages.aggregateCompletionStage();
+         for (int i = 0; i < 1; i++) {
+            final String name = CACHE_NAME + "-" + i;
+            initialization.dependsOn(CompletableFuture.runAsync(() -> {
+               ecm.defineConfiguration(name, builder.build());
+               caches.add(ecm.getCache(name));
+            }));
+         }
+
+         initialization.freeze().toCompletableFuture().join();
       } catch (Exception e) {
          LOG.error("Failed creating cache", e);
          throw new RuntimeException("Failed creating cache", e);
@@ -96,15 +109,29 @@ final class TestAgent implements Agent {
 
    @Override
    public CompletionStage<Long> waitDataRehash() {
-      if (cache == null) return CompletableFuture.completedFuture(0L);
+      if (caches.isEmpty()) return CompletableFuture.completedFuture(0L);
 
-      DataRehashListener listener = new DataRehashListener();
-      cache.addListener(listener);
-      return listener.join().whenComplete((ignore, t) -> cache.removeListener(listener));
+      AggregateCompletionStage<Void> acs = CompletionStages.aggregateCompletionStage();
+      AtomicLong count = new AtomicLong();
+      for (Cache<PersonKey, Object> cache : caches) {
+         DataRehashListener listener = new DataRehashListener();
+         cache.addListener(listener);
+         acs.dependsOn(listener.cf.whenComplete((v, t) -> {
+            cache.removeListener(listener);
+            count.addAndGet(v);
+         }));
+      }
+      return acs.freeze().thenApply(ignore -> count.get());
    }
 
    @Override
    public void showOccupancy() {
+      for (Cache<PersonKey, Object> cache : caches) {
+         showOccupancy(cache);
+      }
+   }
+
+   private void showOccupancy(Cache<PersonKey, Object> cache) {
       DistributionManager dm = ComponentRegistry.componentOf(cache, DistributionManager.class);
       ConsistentHash ch = dm.getCacheTopology().getCurrentCH();
 
@@ -155,7 +182,9 @@ final class TestAgent implements Agent {
                if (key > configuration.getKeyspace())
                   break;
 
-               cache.put(new PersonKey(Integer.toString(key), "pseudonymas"), payload);
+               for (Cache<PersonKey, Object> cache : caches) {
+                  cache.put(new PersonKey(Integer.toString(key), "pseudonymas"), payload);
+               }
                if (print > 0 && key > 0 && key % print == 0) {
                   synchronized (completion) {
                      completion.append("=");
@@ -270,7 +299,7 @@ final class TestAgent implements Agent {
    @Override
    public void stop() {
       ecm.stop();
-      cache = null;
+      caches.clear();
    }
 
    @Listener
@@ -302,6 +331,7 @@ final class TestAgent implements Agent {
       private final Duration duration;
       private final long[] writeHistogram;
       private final long[] readHistogram;
+      private final Cache<PersonKey, Object> cache;
 
       private volatile boolean running = true;
       private long reads;
@@ -311,6 +341,7 @@ final class TestAgent implements Agent {
          this.latch = latch;
          this.payload = payload;
          this.duration = duration;
+         this.cache = caches.get(0);
 
          int space = Math.toIntExact(duration.toSeconds());
          this.writeHistogram = new long[space];

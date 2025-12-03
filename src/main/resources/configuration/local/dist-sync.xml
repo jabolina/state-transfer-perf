@@ -1,19 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
-<infinispan
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:infinispan:config:15.0  https://www.infinispan.org/schemas/infinispan-config-16.0.xsd"
-        xmlns="urn:infinispan:config:16.0">
+<infinispan xmlns="urn:infinispan:config:16.0">
 
     <jgroups>
-        <stack-file name="jgroupsStack" path="jgroups-tcp.xml"/>
+        <stack-file name="jgroupsStack" path="configuration/local/jgroups-tcp.xml"/>
     </jgroups>
 
-    <cache-container name="default" default-cache="perf-cache">
+    <cache-container name="default">
         <transport stack="jgroupsStack" lock-timeout="600000" cluster="default" />
         <jmx enabled="true">
             <property name="enabled">true</property>
         </jmx>
-        <distributed-cache name="perf-cache"/>
     </cache-container>
 </infinispan>
