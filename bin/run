@@ -1,25 +1,65 @@
 #!/bin/bash
 
-DIR=`dirname $0`
-TARGET_DIR=$DIR/../target
-LIBS=$TARGET_DIR/libs
-CP=$TARGET_DIR/classes:$TARGET_DIR/libs/*
+# --- Setup Variables ---
+DIR=$(dirname "$0")
+# Using $(...) for command substitution is generally preferred over backticks (`)
+TARGET_DIR="$DIR/../target"
+LIBS="$TARGET_DIR/libs"
+# The colon is used to separate elements in the classpath
+CP="$TARGET_DIR/classes:$TARGET_DIR/libs/*"
 
-if [ -f $HOME/log4j.properties ]; then
+# Initialize LOG and AGENT_PATH
+LOG=""
+AGENT_PATH=""
+# Arguments to be passed to the Java application
+JAVA_ARGS=()
+
+# --- Logging Configuration ---
+if [ -f "$HOME/log4j.properties" ]; then
     LOG="-Dlog4j.configuration=file:$HOME/log4j.properties"
-fi;
+fi
 
-if [ -f $HOME/log4j2.xml ]; then
+if [ -f "$HOME/log4j2.xml" ]; then
     LOG="$LOG -Dlog4j.configurationFile=$HOME/log4j2.xml"
 else
     LOG="$LOG -Dlog4j.configurationFile=log4j2.xml"
 fi
 
-if [ -f $HOME/logging.properties ]; then
+if [ -f "$HOME/logging.properties" ]; then
     LOG="$LOG -Djava.util.logging.config.file=$HOME/logging.properties"
-fi;
+fi
 
+# --- Argument Parsing and Profiling Check ---
+# Loop through all provided arguments ($@) to check for --profiling
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        # Check for the --profiling option
+        --profiling)
+            # The next argument ($2) should be the path to the agent
+            if [ -n "$2" ]; then
+                AGENT_PATH="-agentpath:$2"
+                # Keep the --profiling flag to pass to the Java application
+                JAVA_ARGS+=("$key")
+                # Shift twice: once for the --profiling key, once for the path value
+                shift 2
+            else
+                echo "Error: --profiling requires an argument (path to agent library)."
+                exit 1
+            fi
+            ;;
+        # For all other arguments, add them to the JAVA_ARGS array
+        *)
+            JAVA_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# --- Java Execution ---
 FLAGS="$JAVA_OPTS -Xmx8g -Dorg.infinispan.threads.virtual=true"
-#DEBUG="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=*:8787"
+# DEBUG="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=*:8787"
+# Note: $DEBUG is commented out in your original script, but included for completeness.
 
-java -agentpath:/home/jab/async-profiler/lib/libasyncProfiler.so -cp $CP $LOG $DEBUG $FLAGS org.infinispan.Main $*
+# Run the Java application, only including $AGENT_PATH if it was set
+java $AGENT_PATH -cp "$CP" $LOG $DEBUG $FLAGS org.infinispan.Main "${JAVA_ARGS[@]}"
